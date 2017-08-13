@@ -13,28 +13,6 @@ It was exhibited at the [ArtScience Museum](http://www.marinabaysands.com/museum
 * install the kinect drivers following [these instructions](https://github.com/OpenKinect/libfreenect2/blob/master/README.md#mac-osx)
 * install the [primesense](https://pypi.python.org/pypi/primesense) package
 
-## Inputs
-
-### Deep Dreaming
-We provide a modified version of the tensorflow deepdream script that outputs gifs and the proper numpy input tensor needed by the main script. See folder:
-```
-deepdream/
-```
-
-### Video input
-Day-to-night timelapse videos are ideal for this. We provide an iPython Notebook script that gets a video and creates the proper tensor needed from the main script:
-
-```
-video2input.ipynb
-```
-
-it requires the youtube_dl package that you can install with:
-
-```
-sudo pip install --upgrade youtube_dl
-```
-
-
 ## Running the demo
 
 In general, to run the demo you need to first connect the kinect to your laptop and then run the main script:
@@ -44,6 +22,14 @@ python silhouettes.py
 While **having the python window selected**, you can exit the demo at any time by pressing the ESC key.
 
 Before running the demo for the first time, you will need to specify the input and output parameters and perhaps adjust the min-max depth values for each specific location.
+
+### Download sample input tensor
+A sample tensor of a deep dream starting from a black image can be downloaded directly from [here](http://www.skamalas.com/silhouettes/black.pkl). The file should be placed in the tensors/ folder for the main script to work without changes. 
+
+Better, one may use the download script provided:
+```
+cd tensors && sh download_sample_tensor.sh
+```
 
 ### Adjusting input and output parameters
 Open silhouettes.py with your favorite editor and adjust the following (self-explanatory) parameters:
@@ -58,8 +44,6 @@ input_fn = 'tensors/black.pkl'
 FINAL_OUTPUT_WIDTH = 1440
 FINAL_OUTPUT_HEIGHT = 900
 ```
-
-A sample tensor (starting from a black image) can be downloaded from [here](http://www.skamalas.com/silhouettes/black.pkl) or using the script in the tensors/ folder.
 
 ### Adjusting min/max depth and debuging kinect input
 
@@ -84,3 +68,25 @@ will clip faraway objects and work better for smaller spaces.
 ``` 
 show_depth = False
 ```
+
+## Creating your own input tensors
+
+### Deep Dreaming
+We provide a modified version of the tensorflow deepdream script that outputs gifs and the proper numpy input tensor needed by the main script. See folder:
+```
+deepdream/
+```
+
+### Video input
+Day-to-night timelapse videos are ideal for this. We provide an iPython Notebook script that gets a video and creates the proper tensor needed from the main script:
+
+```
+video2input.ipynb
+```
+
+it requires the youtube_dl package that you can install with:
+
+```
+sudo pip install --upgrade youtube_dl
+```
+
