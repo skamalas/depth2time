@@ -52,12 +52,14 @@ Open silhouettes.py with your favorite editor and adjust the following (self-exp
 # input/output parameters
 
 # input tensor
-input_fn = 'tensors/black4.pkl'
+input_fn = 'tensors/black.pkl'
 
 # output window size
 FINAL_OUTPUT_WIDTH = 1440
 FINAL_OUTPUT_HEIGHT = 900
 ```
+
+A sample tensor (starting from a black image) can be downloaded from [here](http://www.skamalas.com/silhouettes/black.pkl) or using the script in the tensors/ folder.
 
 ### Adjusting min/max depth and debuging kinect input
 
