@@ -1,7 +1,7 @@
 # Do silhouettes dream?
-<p>Code for reproducing our interactive art installation ["Do silhouettes dream?"](http://www.skamalas.com/#silhouettes). </p>
+Code for reproducing our interactive art installation ["Do silhouettes dream?"](http://www.skamalas.com/#silhouettes).
 
-<p>It was exhibited at the [ArtScience Museum](http://www.marinabaysands.com/museum.html) in Singapore as part of the [Microbites of Innovation Showcase](http://microbites.me/) in conjuction with the [ACM Creativity & Cognition 2017](http://cc.acm.org/2017/) conference.</p>
+It was exhibited at the [ArtScience Museum](http://www.marinabaysands.com/museum.html) in Singapore as part of the [Microbites of Innovation Showcase](http://microbites.me/) in conjuction with the [ACM Creativity & Cognition 2017](http://cc.acm.org/2017/) conference.
 
 ## Requirements
 * python 2.7 with numpy, scipy and matplotlib packages
