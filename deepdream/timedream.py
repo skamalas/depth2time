@@ -1,16 +1,15 @@
 """
-Module containing deep dream functions. Most have been adapted from
+Many of the functions below have been adapted from
 https://github.com/tensorflow/tensorflow/blob/afee9b880a386dfa78756e861241483a15bf22ce/tensorflow/examples/tutorials/deepdream/deepdream.ipynb
-
 """
 from __future__ import print_function
 import os
 import numpy as np
-from functools import partial
 import PIL.Image
 import PIL
 import cPickle as pkl
 import tensorflow as tf
+import re
 
 
 def load_inception_model(model_fn='tensorflow_inception_graph.pb'):
@@ -54,25 +53,35 @@ def resize(img, size):
 resize = tffunc(np.float32, np.int32)(resize)
 
 
-def calc_grad_tiled(img, t_grad, t_input, tile_size=512):
+def calc_grad_tiled(img, t_grad, t_input, tile_size=512, t_neighbor=None, neighbor_img=None):
     """Compute the value of tensor t_grad over the image in a tiled way.
     Random shifts are applied to the image to blur tile boundaries over 
     multiple iterations."""
     sz = tile_size
     h, w = img.shape[:2]
     sx, sy = np.random.randint(sz, size=2)
+
     img_shift = np.roll(np.roll(img, sx, 1), sy, 0)
+    if neighbor_img is not None:
+        neighbor_img_shift = np.roll(np.roll(neighbor_img, sx, 1), sy, 0)
+
     grad = np.zeros_like(img)
     for y in range(0, max(h-sz//2, sz),sz):
         for x in range(0, max(w-sz//2, sz),sz):
             sub = img_shift[y:y+sz,x:x+sz]
-            g = t_grad.eval({t_input:sub})
+            
+            if neighbor_img is None:
+                g = t_grad.eval({t_input: sub})
+            else:
+                n_sub = neighbor_img_shift[y:y+sz,x:x+sz]
+                g = t_grad.eval({t_input: sub, t_neighbor: n_sub})
+
             grad[y:y+sz,x:x+sz] = g
     return np.roll(np.roll(grad, -sx, 1), -sy, 0)
 
 
 def render_deepdream(t_obj, t_input, img0,
-        iter_n=10, step=1.5, octave_n=4, octave_scale=1.4):
+        iter_n=10, step=1.5, octave_n=4, octave_start=1, octave_scale=1.4):
     """Deep dream an image with the given objective."""
     t_score = tf.reduce_mean(t_obj)
     t_grad = tf.gradients(t_score, t_input)[0]
@@ -92,16 +101,17 @@ def render_deepdream(t_obj, t_input, img0,
         if octave>0:
             hi = octaves[-octave]
             img = resize(img, hi.shape[:2])+hi
+        if octave < octave_start:
+            continue
         for i in range(iter_n):
             g = calc_grad_tiled(img, t_grad, t_input)
             img += g*(step / (np.abs(g).mean()+1e-7))
-            print('.',end = ' ')
 
     return img / 255.0
 
 
 def render_deepdream_series(img, t_input, n_frames, loss,
-        iter_n=10, step=1.5, octave_n=4, octave_scale=1.4):
+        iter_n=10, step=1.5, octave_n=4, octave_start=1, octave_scale=1.4, use_prev=False):
     """Deep dream a series of frames independently."""
     frames = []
     for i in range(n_frames):
@@ -111,15 +121,129 @@ def render_deepdream_series(img, t_input, n_frames, loss,
         kwargs = dict(
             iter_n = iter_n(i) if callable(iter_n) else iter_n,
             step = step(i) if callable(step) else step,
-            octave_n = octave_n,
-            octave_scale = octave_scale
+            octave_n = octave_n(i) if callable(octave_n) else octave_n,
+            octave_start = octave_start(i) if callable(octave_start) else octave_start,
+            octave_scale = octave_scale,
+            
         )
 
         d_img = render_deepdream(frame_loss, t_input, img, **kwargs)
+        if use_prev:
+            img = d_img * 255.
         d_img = np.uint8(np.clip(d_img, 0, 1) * 255)
         frames.append(d_img)
 
     return np.stack(frames)
+
+
+def get_next_naming_number(directory, name, ext):
+    """Get the next available number to append to a filename to avoid name collision."""
+    files = os.listdir(directory)
+    pat = '^%s([0-9]+).%s$' % (name, ext)
+    matches = map(lambda f: re.match(pat, f), files)
+    matches = filter(lambda x: x, matches)
+    nums = map(lambda m: int(m.group(1)), matches)
+    if nums:
+        num = max(nums) + 1
+    else:
+        num = 0
+        
+    return os.path.join(directory, '%s%d.%s' % (name, num, ext))
+
+
+def get_layer_by_name(layer):
+    """Helper for getting layer output tensor."""
+    graph = tf.get_default_graph()
+    return graph.get_tensor_by_name("import/%s:0" % layer)
+
+
+def first_zero_lambda(fn, v=0):
+    """Create a function that returns a fixed value when called with 0.
+    
+    Otherwise defer to the passed in function. This is helpful
+    to maintain a fixed value for the first frame of a series.
+    """
+    def wrap(i):
+        if i == 0:
+            return v
+        else:
+            return fn(i)
+    return wrap
+
+
+def piecewise_lambda(l, n_frames):
+    """Create a lambda function that indexs into a list."""
+    def wrap(i):
+        ind = len(l) * i // n_frames
+        return l[ind]
+    return wrap
+
+
+######################################
+#   Deep dream parameter functions   #
+######################################
+"""
+Functions below can be referenced by name via the --dream param to provide
+a loss tensor and a dictionary of deep dream parameters. Each function can
+take a desired number of frames and a string that can be parsed to provide
+additional arguments/parameters from the commandline. This allows the logic
+in the function to determine the dream parameters but also enabled convenient
+control from the commandline for experimentation and customization.
+"""
+
+def layers_fast_dream(n_frames, dream_params):
+    """Continue on each frame, iterate deeply."""
+    loss_layers = dream_params.split(',')
+    print('Loss layers:', loss_layers)
+
+    losses = [tf.reduce_sum(tf.square(get_layer_by_name(x))) for x in loss_layers]
+    frame_loss = piecewise_lambda(losses, n_frames)
+
+    return frame_loss, dict(
+        iter_n=first_zero_lambda(lambda i: 100),
+        step=1.5,
+        octave_n=4,
+        use_prev=True
+    )
+
+
+def layers_fast_dream_independent(n_frames, dream_params):
+    """Start over on each frame, iterate deeply."""
+    loss_layers = dream_params.split(',')
+    print('Loss layers:', loss_layers)
+
+    losses = [tf.reduce_sum(tf.square(get_layer_by_name(x))) for x in loss_layers]
+    frame_loss = piecewise_lambda(losses, n_frames)
+
+    return frame_loss, dict(
+        iter_n=first_zero_lambda(lambda i: 100),
+        step=1.5,
+        octave_n=4,
+        use_prev=False
+    )
+
+def iteration_layers_dream(n_frames, dream_params):
+    """Continue on each frame, shallow iteration"""
+    loss_layers = dream_params.split(',')
+    print('Loss layers:', loss_layers)
+
+    losses = [tf.reduce_sum(tf.square(get_layer_by_name(x))) for x in loss_layers]
+    frame_loss = piecewise_lambda(losses, n_frames)
+
+    return frame_loss, dict(
+        iter_n=first_zero_lambda(lambda i: 3),
+        step=1.5,
+        octave_n=4,
+        use_prev=True
+    )
+
+
+# Named parameter template functions
+DREAMS = {
+    'layers_fast_dream': layers_fast_dream,
+    'layers_fast_dream_independent': layers_fast_dream_independent,
+    'iteration_layers_dream': iteration_layers_dream,
+}
 
 
 if __name__ == '__main__':
@@ -127,23 +251,25 @@ if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
 
-    # Data handling parameters
-    parser.add_argument('--img', dest='img', type=str, default='museum.jpg', help='image filename')
+    parser.add_argument('--img', dest='img', type=str, help='image filename')
     parser.add_argument('--frames', '-n', dest='n_frames', type=int, default=1, help='number of frames to dream')
-    parser.add_argument('--dream', '-d', dest='dream', type=str, required=True, help='the name of the dream to run')
+    parser.add_argument('--dream', '-d', dest='dream', type=str, help='the name of the dream to run')
     parser.add_argument('--print_layers', '-p', dest='print_layers', action='store_true',
                         help='print model layers and exit')
     parser.add_argument('--frames_dir', '-f', dest='frames_dir', default=None, help='directory name to save frames')
     parser.add_argument('--frames_pkl', '-o', dest='frames_pkl', default=None, help='pickle file name to save frames')
     parser.add_argument('--frames_gif', '-g', dest='frames_gif', default=None, help='gif file name to save frames')
+    parser.add_argument('--dream_params', '-e', dest='dream_params', default=None, help='')
     args = parser.parse_args()
-    
+
     # Create a default session
     sess = tf.InteractiveSession()
     
     # Build model
     graph, t_input, layers = load_inception_model()
+    t_neighbor = tf.placeholder(tf.float32, name='neighbor_input')
     
+    # Print a list of layer names available for dreaming
     if args.print_layers:
         for l in layers:
             print(l)
@@ -153,7 +279,7 @@ if __name__ == '__main__':
     img = np.float32(PIL.Image.open(args.img))
     
     # Get dream function with specified name and render frames
-    t_obj, kwargs = dreams.DREAMS[args.dream](args.n_frames)
+    t_obj, kwargs = DREAMS[args.dream](args.n_frames, args.dream_params)
     frames = render_deepdream_series(img, t_input, args.n_frames, t_obj, **kwargs)
 
     # Save frame images
@@ -163,12 +289,22 @@ if __name__ == '__main__':
         for i, frame in enumerate(frames):
             PIL.Image.fromarray(frame).save(os.path.join(args.frames_dir, str(i) + '.jpg'))
 
+    # Automatically create a filename based on the source if only an output
+    # directory was provided
+    source_name = os.path.splitext(os.path.basename(args.img))[0]
+
     # Save tensor pickle
     if args.frames_pkl:
-        pkl.dump(frames, open(args.frames_pkl, 'w'))
+        if os.path.isdir(args.frames_pkl):
+            args.frames_pkl = get_next_naming_number(args.frames_pkl, source_name, 'pkl')
+        pkl.dump(frames, open(args.frames_pkl, 'w'), -1)
+        print('Saved ' + args.frames_pkl)
 
     # Save gif
     if args.frames_gif:
         import pkl2gif
+        if os.path.isdir(args.frames_gif):
+            args.frames_gif = get_next_naming_number(args.frames_gif, source_name, 'gif')
         pkl2gif.save_tensor_as_gif(frames, args.frames_gif)
+        print('Saved ' + args.frames_gif)
 
